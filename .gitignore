@@ -1,0 +1,38 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.turbo/
+
+# Rust
+rust/target/
+*.dylib
+*.so
+*.a
+
+# iOS
+ios/Pods/
+ios/build/
+*.xcworkspace
+*.xcuserdata
+
+# Android
+android/build/
+android/.gradle/
+android/src/main/jniLibs/
+
+# Environment
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Coverage
+coverage/
+
+# OS
+.DS_Store
+Thumbs.db

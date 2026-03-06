@@ -1,0 +1,46 @@
+[package]
+name = "qmdb-mobile"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "QMDB native bridge for React Native — mobile FFI layer over commonware-storage"
+
+[lib]
+name = "qmdb_mobile"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+# Core QMDB — no_std compatible subset
+commonware-storage = { version = "2026.2", default-features = false }
+commonware-cryptography = { version = "2026.2", default-features = false }
+commonware-codec = { version = "2026.2", default-features = false }
+commonware-utils = { version = "2026.2", default-features = false }
+
+# Serialization for FFI
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+
+[dev-dependencies]
+commonware-storage = { version = "2026.2", features = ["std", "test-traits"] }
+commonware-runtime = "2026.2"
+tempfile = "3"
+
+[features]
+default = ["std"]
+std = [
+    "commonware-storage/std",
+    "commonware-cryptography/std",
+    "commonware-codec/std",
+    "commonware-utils/std",
+]
+# For mobile cross-compilation: cargo build --no-default-features
+mobile = []
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = "s"  # Optimize for binary size on mobile
