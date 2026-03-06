@@ -3,6 +3,8 @@
  */
 
 const HEX_CHARS = "0123456789abcdef";
+const TEXT_ENCODER = new TextEncoder();
+const TEXT_DECODER = new TextDecoder();
 
 /** Encode a Uint8Array to a hex string. */
 export function toHex(bytes: Uint8Array): string {
@@ -33,10 +35,10 @@ export function fromHex(hex: string): Uint8Array {
 
 /** Encode a UTF-8 string as hex. */
 export function stringToHex(str: string): string {
-  return toHex(new TextEncoder().encode(str));
+  return toHex(TEXT_ENCODER.encode(str));
 }
 
 /** Decode a hex string to a UTF-8 string. */
 export function hexToString(hex: string): string {
-  return new TextDecoder().decode(fromHex(hex));
+  return TEXT_DECODER.decode(fromHex(hex));
 }

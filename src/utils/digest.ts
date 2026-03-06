@@ -5,6 +5,8 @@
  * the mock native module and for client-side root comparison.
  */
 
+import type { Digest } from "../types/database";
+
 const ENCODER = new TextEncoder();
 
 /** SHA-256 hash, returned as a hex string. Synchronous (uses SubtleCrypto when available). */
@@ -34,5 +36,3 @@ export function digestsEqual(a: Digest, b: Digest): boolean {
 export function isValidDigest(d: string): boolean {
   return /^[0-9a-f]{64}$/i.test(d);
 }
-
-type Digest = string;

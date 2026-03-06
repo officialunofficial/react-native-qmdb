@@ -2,7 +2,7 @@
  * useSync — hook for synchronizing local state with a remote QMDB instance.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useQMDBContext } from "../context/qmdb-context";
 import type { Location, Operation } from "../types";
 
@@ -13,7 +13,7 @@ export interface UseSyncReturn {
   status: SyncStatus;
   /** Error message if status is "error". */
   error: string | null;
-  /** Last synced location. */
+  /** Last synced location (reactive). */
   lastSyncedLocation: Location;
 
   /** Push local operations to a remote endpoint. */
@@ -33,7 +33,12 @@ export function useSync(): UseSyncReturn {
   const ctx = useQMDBContext();
   const [status, setStatus] = useState<SyncStatus>("idle");
   const [error, setError] = useState<string | null>(null);
-  const lastSyncedRef = useRef<Location>(0);
+  const [lastSyncedLocation, setLastSyncedLocation] = useState<Location>(0);
+
+  const handleError = useCallback((e: unknown) => {
+    setError(e instanceof Error ? e.message : String(e));
+    setStatus("error");
+  }, []);
 
   const push = useCallback(
     async (
@@ -46,15 +51,14 @@ export function useSync(): UseSyncReturn {
         const ops = await ctx.operationsSince(since);
         if (ops.length > 0) {
           await sender(ops);
-          lastSyncedRef.current = since + ops.length;
+          setLastSyncedLocation(since + ops.length);
         }
         setStatus("synced");
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-        setStatus("error");
+        handleError(e);
       }
     },
-    [ctx.operationsSince]
+    [ctx.operationsSince, handleError]
   );
 
   const pull = useCallback(
@@ -65,28 +69,27 @@ export function useSync(): UseSyncReturn {
       setStatus("syncing");
       setError(null);
       try {
-        const ops = await fetcher(lastSyncedRef.current, limit);
+        const ops = await fetcher(lastSyncedLocation, limit);
         if (ops.length > 0) {
           await ctx.applyOperations(ops);
-          lastSyncedRef.current += ops.length;
+          setLastSyncedLocation((prev) => prev + ops.length);
         }
         setStatus("synced");
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-        setStatus("error");
+        handleError(e);
       }
     },
-    [ctx.applyOperations]
+    [ctx.applyOperations, lastSyncedLocation, handleError]
   );
 
   return useMemo(
     () => ({
       status,
       error,
-      lastSyncedLocation: lastSyncedRef.current,
+      lastSyncedLocation,
       push,
       pull,
     }),
-    [status, error, push, pull]
+    [status, error, lastSyncedLocation, push, pull]
   );
 }

@@ -191,8 +191,8 @@ export function QMDBProvider({ children, nativeModule }: QMDBProviderProps) {
 
   const value: QMDBContextValue = {
     info,
-    isOpen: pathRef.current !== null,
-    root: info?.state === "clean" || info?.state === "merkleized_nondurable"
+    isOpen: info !== null,
+    root: info !== null && (info.state === "clean" || info.state === "merkleized_nondurable")
       ? info.root
       : null,
 

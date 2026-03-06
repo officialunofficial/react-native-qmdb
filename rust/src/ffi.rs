@@ -46,7 +46,7 @@ pub extern "C" fn qmdb_open(config_json: *const c_char) -> *const c_char {
 }
 
 fn _qmdb_open(config_json: *const c_char) -> Result<String, QmdbError> {
-    let _config = parse_c_str(config_json, "config_json")?;
+    let _config = unsafe { parse_c_str(config_json, "config_json")? };
     // TODO: Initialize commonware-storage QMDB instance
     // For now, return a placeholder clean state
     Ok(serde_json::json!({
@@ -65,7 +65,7 @@ fn _qmdb_open(config_json: *const c_char) -> Result<String, QmdbError> {
 /// `path` must be a valid null-terminated UTF-8 C string.
 #[unsafe(no_mangle)]
 pub extern "C" fn qmdb_close(path: *const c_char) -> *const c_char {
-    match parse_c_str(path, "path") {
+    match unsafe { parse_c_str(path, "path") } {
         Ok(_path) => {
             // TODO: Close the database instance
             string_to_c(r#"{"ok":true}"#.to_string())
@@ -76,14 +76,18 @@ pub extern "C" fn qmdb_close(path: *const c_char) -> *const c_char {
 
 // --- Helpers ---
 
-fn parse_c_str(ptr: *const c_char, name: &str) -> Result<String, QmdbError> {
+/// Parse a C string pointer into a borrowed `&str`.
+///
+/// # Safety
+/// Caller must ensure `ptr` points to a valid, null-terminated C string
+/// that outlives the returned `&str`.
+unsafe fn parse_c_str<'a>(ptr: *const c_char, name: &str) -> Result<&'a str, QmdbError> {
     if ptr.is_null() {
         return Err(QmdbError::NullPointer(name.to_string()));
     }
     let c_str = unsafe { CStr::from_ptr(ptr) };
     c_str
         .to_str()
-        .map(|s| s.to_string())
         .map_err(|e| QmdbError::InvalidUtf8(e.to_string()))
 }
 

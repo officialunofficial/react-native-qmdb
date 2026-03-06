@@ -43,6 +43,12 @@ function getDB(path: string): DBInstance {
   return db;
 }
 
+function requireMutable(db: DBInstance, action: string): void {
+  if (db.state !== "mutable") {
+    throw new Error(`Cannot ${action} in state: ${db.state}`);
+  }
+}
+
 function toInfo(db: DBInstance): DatabaseInfo {
   return {
     state: db.state,
@@ -85,7 +91,7 @@ export function createMockNativeQMDB(): NativeQMDB {
 
     async update(path: string, key: Key, value: Value): Promise<Location> {
       const db = getDB(path);
-      if (db.state !== "mutable") throw new Error(`Cannot update in state: ${db.state}`);
+      requireMutable(db, "update");
       db.store.set(key, value);
       const loc = db.log.length;
       db.log.push({ type: "update", key, value, location: loc });
@@ -94,7 +100,7 @@ export function createMockNativeQMDB(): NativeQMDB {
 
     async delete(path: string, key: Key): Promise<void> {
       const db = getDB(path);
-      if (db.state !== "mutable") throw new Error(`Cannot delete in state: ${db.state}`);
+      requireMutable(db, "delete");
       db.store.delete(key);
       db.log.push({ type: "delete", key, location: db.log.length });
     },
@@ -109,7 +115,7 @@ export function createMockNativeQMDB(): NativeQMDB {
       entries: Array<{ key: Key; value: Value }>
     ): Promise<Location[]> {
       const db = getDB(path);
-      if (db.state !== "mutable") throw new Error(`Cannot batch update in state: ${db.state}`);
+      requireMutable(db, "batch update");
       const locations: Location[] = [];
       for (const { key, value } of entries) {
         db.store.set(key, value);
@@ -122,7 +128,7 @@ export function createMockNativeQMDB(): NativeQMDB {
 
     async commit(path: string): Promise<DatabaseInfo> {
       const db = getDB(path);
-      if (db.state !== "mutable") throw new Error(`Cannot commit in state: ${db.state}`);
+      requireMutable(db, "commit");
       db.state = "unmerkleized_durable";
       return toInfo(db);
     },
@@ -185,7 +191,7 @@ export function createMockNativeQMDB(): NativeQMDB {
 
     async applyOperations(path: string, operations: Operation[]): Promise<Bounds> {
       const db = getDB(path);
-      if (db.state !== "mutable") throw new Error(`Cannot apply operations in state: ${db.state}`);
+      requireMutable(db, "apply operations");
       for (const op of operations) {
         if (op.type === "update" && op.value != null) {
           db.store.set(op.key, op.value);

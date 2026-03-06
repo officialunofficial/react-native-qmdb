@@ -6,15 +6,15 @@
 
 import { useCallback, useMemo } from "react";
 import { useQMDBContext } from "../context/qmdb-context";
-import type { DatabaseConfig, Key, Value } from "../types";
+import type { DatabaseConfig, DatabaseState, Digest, Key, Value } from "../types";
 
 export interface UseQMDBReturn {
   /** Current Merkle root (null if not merkleized or not open). */
-  root: string | null;
+  root: Digest | null;
   /** Whether the database is open. */
   isOpen: boolean;
   /** Current database state. */
-  state: string | null;
+  state: DatabaseState | null;
   /** Number of active keys. */
   activeKeys: number;
   /** Total operations in the log. */

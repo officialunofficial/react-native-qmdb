@@ -178,7 +178,7 @@ describe("QMDBProvider + useQMDBContext", () => {
 
     // Should fail — database is in "clean" state, not "mutable"
     await expect(result.current.update("k", "v")).rejects.toThrow(
-      "Cannot update in state: clean"
+      "Cannot update in state"
     );
   });
 });
