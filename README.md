@@ -22,56 +22,60 @@ And it's fast. QMDB achieves 2.28M state updates/sec with ~2.3 bytes/entry memor
 
 | You need... | Why QMDB helps |
 |---|---|
-| Users to verify they got the right data from your server | Proof verification against a shared root |
-| Tamper-evident audit logs on device | Append-only log with Merkle commitments |
-| Conflict-free sync between devices | Operation logs with cryptographic consistency checks |
-| Regulatory compliance for data integrity | Provable, timestamped operation history |
-| Users to prove ownership or actions | Historical proofs over any key at any point in time |
-| Peer-to-peer state exchange without a trusted server | Both sides verify against the same root |
+| Fast, verifiable message sync | Operation log replays with cryptographic consistency — detect dropped or altered messages |
+| Tamper-evident audit trail | Append-only log with Merkle commitments that anyone can independently verify |
+| Peer-to-peer state without a trusted server | Both sides verify against the same root — no coordinator needed |
+| Proof that a user did (or didn't do) something | Historical proofs over any key at any point in time |
+| Verified API responses | Server publishes a root commitment, client verifies every response against it |
 
 ## Examples
 
-### Verified Settings Sync
+### Chat Sync
 
-Ensure a user's settings weren't modified in transit between devices or by a compromised server:
+Sync messages between devices, detect if the server dropped or reordered anything:
 
 ```tsx
 import { QMDBProvider, useQMDB, useProof, useSync } from 'react-native-qmdb';
 
-function SettingsScreen() {
+function ChatScreen({ conversationId }: { conversationId: string }) {
   const db = useQMDB();
-  const { prove, verify } = useProof();
-  const { push, pull, status } = useSync();
+  const { verify } = useProof();
+  const { push, pull, status, lastSyncedLocation } = useSync();
 
-  // Save a setting with cryptographic commitment
-  async function saveSetting(key: string, value: string) {
+  // Send a message — append to the local log with a Merkle commitment
+  async function sendMessage(text: string) {
+    const id = `${conversationId}:${Date.now()}`;
+    const message = JSON.stringify({ text, sender: 'me', ts: Date.now() });
+
     await db.startTransaction();
-    await db.set(`settings:${key}`, value);
+    await db.set(id, message);
     const root = await db.commitAndMerkleize();
-    // root is a SHA-256 digest — pin it, share it, compare it
-    console.log('New state root:', root);
-  }
 
-  // Sync settings to another device and verify integrity
-  async function syncToCloud() {
-    await push(0, async (ops) => {
-      await fetch('/api/sync', {
+    // Push the new operations to the server along with the root
+    await push(lastSyncedLocation ?? 0, async (ops) => {
+      await fetch(`/api/chat/${conversationId}/sync`, {
         method: 'POST',
-        body: JSON.stringify({ operations: ops, root: db.root }),
+        body: JSON.stringify({ operations: ops, root }),
       });
     });
   }
 
-  // Pull settings from cloud and verify nothing was altered
-  async function syncFromCloud() {
+  // Pull new messages — verify the server didn't tamper with the history
+  async function pullMessages() {
     await pull(async (since, limit) => {
-      const res = await fetch(`/api/sync?since=${since}&limit=${limit}`);
+      const res = await fetch(
+        `/api/chat/${conversationId}/sync?since=${since}&limit=${limit}`
+      );
       const { operations, root: serverRoot } = await res.json();
 
-      // Verify the server's state matches what we expect
-      const proof = await prove('settings:theme');
-      const result = await verify(proof, serverRoot);
-      if (!result.valid) throw new Error('Server state is inconsistent');
+      // If we already have state, verify the server's root is consistent
+      if (db.root) {
+        const result = await verify(
+          { operations, nodes: [serverRoot], range: { start: since, end: since + operations.length } },
+          serverRoot
+        );
+        if (!result.valid) throw new Error('Server history is inconsistent — possible tampering');
+      }
 
       return operations;
     });
@@ -80,9 +84,9 @@ function SettingsScreen() {
   return (
     <View>
       <Text>Sync: {status}</Text>
-      <Button title="Dark Mode" onPress={() => saveSetting('theme', 'dark')} />
-      <Button title="Push" onPress={syncToCloud} />
-      <Button title="Pull" onPress={syncFromCloud} />
+      <MessageList />
+      <ComposeBar onSend={sendMessage} />
+      <Button title="Refresh" onPress={pullMessages} />
     </View>
   );
 }
@@ -90,33 +94,38 @@ function SettingsScreen() {
 
 ### Tamper-Evident Audit Log
 
-Record user actions with cryptographic guarantees — useful for fintech, healthcare, or any regulated app:
+Every action the user takes gets a cryptographic receipt. Useful for fintech, healthcare, or any app where "I didn't do that" is a legal question:
 
 ```tsx
 function AuditLog() {
   const db = useQMDB();
   const { prove } = useProof();
 
+  // Record an action — the root becomes an unforgeable receipt
   async function recordAction(action: string, details: string) {
-    const timestamp = Date.now().toString();
-    const entry = JSON.stringify({ action, details, timestamp });
+    const id = `audit:${Date.now()}`;
+    const entry = JSON.stringify({ action, details, ts: Date.now() });
 
     await db.startTransaction();
-    await db.set(`audit:${timestamp}`, entry);
+    await db.set(id, entry);
     const root = await db.commitAndMerkleize();
 
-    // Store root externally (server, blockchain, etc.) for independent verification
+    // Anchor the root externally — server, blockchain, whatever
+    // Anyone with this root can later verify any proof you produce
     await fetch('/api/audit/anchor', {
       method: 'POST',
-      body: JSON.stringify({ root, timestamp }),
+      body: JSON.stringify({ root, id }),
     });
+
+    return { root, id };
   }
 
-  // Generate a proof that a specific action occurred
-  async function proveAction(timestamp: string) {
-    const proof = await prove(`audit:${timestamp}`);
-    // This proof can be verified by anyone with the anchored root
-    return proof;
+  // Generate a portable proof that a specific action occurred
+  // Hand this to an auditor, regulator, or counterparty
+  async function exportProof(id: string) {
+    const proof = await prove(id);
+    // proof + root = independently verifiable evidence
+    return { proof, root: db.root };
   }
 
   return (
@@ -130,79 +139,90 @@ function AuditLog() {
 }
 ```
 
-### Peer-to-Peer Data Exchange
+### Collaborative State (P2P)
 
-Two devices can exchange state and independently verify consistency — no trusted server required:
+Two users share a list over any transport — BLE, WebRTC, local WiFi. No server decides who's right; the Merkle root does:
 
 ```tsx
-function P2PSync() {
+function SharedList() {
   const db = useQMDB();
   const { verify } = useProof();
-  const { pull } = useSync();
+  const { push, pull } = useSync();
 
-  // Receive state from a peer over any transport (BLE, WebRTC, local network)
-  async function receiveFromPeer(peerData: {
-    operations: Operation[];
-    proof: Proof;
-    root: string;
-  }) {
-    // Verify the peer's proof against their claimed root
-    const result = await verify(peerData.proof, peerData.root);
+  // Add an item and broadcast your latest state
+  async function addItem(name: string) {
+    await db.startTransaction();
+    await db.set(`item:${Date.now()}`, name);
+    const root = await db.commitAndMerkleize();
 
-    if (!result.valid) {
-      console.warn('Peer data failed verification — rejecting');
+    // Send your new ops to the peer (BLE, WebRTC, etc.)
+    await push(0, async (ops) => {
+      peer.send({ operations: ops, root });
+    });
+  }
+
+  // Receive ops from a peer — verify before applying
+  async function onPeerData(data: { operations: Operation[]; root: string }) {
+    // Verify the peer's claimed state is internally consistent
+    const check = await verify(
+      { operations: data.operations, nodes: [data.root], range: { start: 0, end: data.operations.length } },
+      data.root
+    );
+
+    if (!check.valid) {
+      console.warn('Peer sent inconsistent data — ignoring');
       return;
     }
 
-    // Safe to apply — cryptographically verified
+    // Verified — safe to merge into our local state
     await db.startTransaction();
-    await pull(async () => peerData.operations);
+    await pull(async () => data.operations);
     await db.commitAndMerkleize();
   }
 }
 ```
 
-### Verified Cache Layer
+### Verified API Responses
 
-Replace a plain cache with one that detects server-side data corruption:
+Your server commits to a Merkle root. Your app verifies every response against it — a compromised CDN or MITM can't serve fake data:
 
 ```tsx
-function useVerifiedFetch(endpoint: string) {
+function useVerifiedAPI(endpoint: string) {
   const db = useQMDB();
   const { prove, verify } = useProof();
-  const [data, setData] = useState(null);
 
-  async function fetchAndCache() {
-    const res = await fetch(endpoint);
-    const { payload, root: serverRoot } = await res.json();
+  // Fetch data and verify it matches the server's published commitment
+  async function fetchVerified<T>(path: string): Promise<T> {
+    const res = await fetch(`${endpoint}${path}`);
+    const { data, proof, root } = await res.json();
 
-    // Cache locally with Merkle commitment
-    await db.startTransaction();
-    await db.set(`cache:${endpoint}`, JSON.stringify(payload));
-    const localRoot = await db.commitAndMerkleize();
-
-    setData(payload);
-  }
-
-  // On subsequent reads, verify the cache hasn't been tampered with
-  async function readFromCache() {
-    const cached = await db.get(`cache:${endpoint}`);
-    if (!cached) return null;
-
-    const proof = await prove(`cache:${endpoint}`);
-    const result = await verify(proof, db.root!);
-
+    // Verify the server's proof — does this data actually belong to this root?
+    const result = await verify(proof, root);
     if (!result.valid) {
-      // Cache was tampered with — refetch
-      console.warn('Cache integrity check failed');
-      await fetchAndCache();
-      return;
+      throw new Error(`Verification failed for ${path} — data may be tampered`);
     }
 
-    setData(JSON.parse(cached));
+    // Cache locally so we can re-verify offline
+    await db.startTransaction();
+    await db.set(`api:${path}`, JSON.stringify(data));
+    await db.commitAndMerkleize();
+
+    return data as T;
   }
 
-  return { data, fetch: fetchAndCache, readFromCache };
+  // Re-verify cached data offline against our local root
+  async function readCached<T>(path: string): Promise<T | null> {
+    const cached = await db.get(`api:${path}`);
+    if (!cached) return null;
+
+    const proof = await prove(`api:${path}`);
+    const result = await verify(proof, db.root!);
+    if (!result.valid) return null; // tampered — discard
+
+    return JSON.parse(cached) as T;
+  }
+
+  return { fetchVerified, readCached };
 }
 ```
 
