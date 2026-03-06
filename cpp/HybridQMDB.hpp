@@ -2,31 +2,8 @@
 
 #include <NitroModules/HybridObject.hpp>
 #include <string>
-#include <optional>
-#include <vector>
-#include <future>
 
-// Rust FFI — C-compatible functions from qmdb_mobile
-extern "C" {
-  const char *qmdb_version(void);
-  void qmdb_free_string(char *ptr);
-  const char *qmdb_open(const char *config_json);
-  const char *qmdb_close(const char *path);
-  const char *qmdb_destroy(const char *path);
-  const char *qmdb_info(const char *path);
-  const char *qmdb_get(const char *path, const char *key);
-  const char *qmdb_update(const char *path, const char *key, const char *value);
-  const char *qmdb_delete(const char *path, const char *key);
-  const char *qmdb_batch_update(const char *path, const char *entries_json);
-  const char *qmdb_into_mutable(const char *path);
-  const char *qmdb_commit(const char *path);
-  const char *qmdb_merkleize(const char *path);
-  const char *qmdb_prove(const char *path, const char *key);
-  const char *qmdb_range_proof(const char *path, uint64_t start, uint64_t end);
-  const char *qmdb_verify(const char *proof_json, const char *root);
-  const char *qmdb_operations_since(const char *path, uint64_t since, uint64_t limit);
-  const char *qmdb_apply_operations(const char *path, const char *ops_json);
-}
+#include "QMDBBridge.h"
 
 namespace margelo::nitro::qmdb {
 

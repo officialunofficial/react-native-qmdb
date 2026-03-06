@@ -41,11 +41,19 @@ pub struct Bounds {
     pub end: u64,
 }
 
+/// Type of operation in the append-only log.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OpType {
+    Update,
+    Delete,
+}
+
 /// An operation recorded in the append-only log.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Operation {
     #[serde(rename = "type")]
-    pub op_type: String,
+    pub op_type: OpType,
     pub key: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
@@ -110,6 +118,17 @@ impl DbInstance {
         }
         Ok(())
     }
+
+    fn push_op(&mut self, op_type: OpType, key: &str, value: Option<&str>) -> u64 {
+        let loc = self.log.len() as u64;
+        self.log.push(Operation {
+            op_type,
+            key: key.to_string(),
+            value: value.map(|v| v.to_string()),
+            location: loc,
+        });
+        loc
+    }
 }
 
 /// Compute a mock Merkle root from operation log (djb2 hash, NOT cryptographic).
@@ -121,9 +140,13 @@ fn compute_root(ops: &[Operation]) -> String {
     let serialized: String = ops
         .iter()
         .map(|op| {
+            let type_str = match op.op_type {
+                OpType::Update => "update",
+                OpType::Delete => "delete",
+            };
             format!(
                 "{}:{}:{}",
-                op.op_type,
+                type_str,
                 op.key,
                 op.value.as_deref().unwrap_or("")
             )
@@ -206,14 +229,7 @@ pub fn update(path: &str, key: &str, value: &str) -> Result<u64, QmdbError> {
     with_db(path, |db| {
         db.require_mutable("update")?;
         db.store.insert(key.to_string(), value.to_string());
-        let loc = db.log.len() as u64;
-        db.log.push(Operation {
-            op_type: "update".to_string(),
-            key: key.to_string(),
-            value: Some(value.to_string()),
-            location: loc,
-        });
-        Ok(loc)
+        Ok(db.push_op(OpType::Update, key, Some(value)))
     })
 }
 
@@ -221,12 +237,7 @@ pub fn delete(path: &str, key: &str) -> Result<(), QmdbError> {
     with_db(path, |db| {
         db.require_mutable("delete")?;
         db.store.remove(key);
-        db.log.push(Operation {
-            op_type: "delete".to_string(),
-            key: key.to_string(),
-            value: None,
-            location: db.log.len() as u64,
-        });
+        db.push_op(OpType::Delete, key, None);
         Ok(())
     })
 }
@@ -237,14 +248,7 @@ pub fn batch_update(path: &str, entries: &[(String, String)]) -> Result<Vec<u64>
         let mut locations = Vec::with_capacity(entries.len());
         for (key, value) in entries {
             db.store.insert(key.clone(), value.clone());
-            let loc = db.log.len() as u64;
-            db.log.push(Operation {
-                op_type: "update".to_string(),
-                key: key.clone(),
-                value: Some(value.clone()),
-                location: loc,
-            });
-            locations.push(loc);
+            locations.push(db.push_op(OpType::Update, key, Some(value)));
         }
         Ok(locations)
     })
@@ -252,8 +256,16 @@ pub fn batch_update(path: &str, entries: &[(String, String)]) -> Result<Vec<u64>
 
 pub fn into_mutable(path: &str) -> Result<DatabaseInfo, QmdbError> {
     with_db(path, |db| {
-        db.state = DatabaseState::Mutable;
-        Ok(db.to_info())
+        match db.state {
+            DatabaseState::Clean | DatabaseState::MerkleizedNondurable => {
+                db.state = DatabaseState::Mutable;
+                Ok(db.to_info())
+            }
+            _ => Err(QmdbError::InvalidState {
+                action: "into_mutable".to_string(),
+                state: format!("{:?}", db.state),
+            }),
+        }
     })
 }
 
@@ -279,7 +291,7 @@ pub fn merkleize(path: &str) -> Result<DatabaseInfo, QmdbError> {
                 db.state = DatabaseState::Clean;
             }
             DatabaseState::MerkleizedNondurable => {
-                // Already merkleized, just return info
+                db.state = DatabaseState::Clean;
             }
         }
         Ok(db.to_info())
@@ -339,19 +351,17 @@ pub fn apply_operations(path: &str, operations: &[Operation]) -> Result<Bounds, 
     with_db(path, |db| {
         db.require_mutable("apply operations")?;
         for op in operations {
-            if op.op_type == "update" {
-                if let Some(ref value) = op.value {
-                    db.store.insert(op.key.clone(), value.clone());
+            match op.op_type {
+                OpType::Update => {
+                    if let Some(ref value) = op.value {
+                        db.store.insert(op.key.clone(), value.clone());
+                    }
                 }
-            } else if op.op_type == "delete" {
-                db.store.remove(&op.key);
+                OpType::Delete => {
+                    db.store.remove(&op.key);
+                }
             }
-            db.log.push(Operation {
-                op_type: op.op_type.clone(),
-                key: op.key.clone(),
-                value: op.value.clone(),
-                location: db.log.len() as u64,
-            });
+            db.push_op(op.op_type.clone(), &op.key, op.value.as_deref());
         }
         Ok(Bounds {
             start: 0,

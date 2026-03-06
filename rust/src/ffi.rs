@@ -17,6 +17,26 @@ use std::ffi::{CStr, CString, c_char};
 use crate::error::QmdbError;
 use crate::state;
 
+/// Parse a C string arg, returning early with a JSON error on null/invalid UTF-8.
+macro_rules! parse_arg {
+    ($ptr:expr, $name:expr) => {
+        match unsafe { parse_c_str($ptr, $name) } {
+            Ok(s) => s,
+            Err(e) => return string_to_c(e.to_json()),
+        }
+    };
+}
+
+/// Serialize a successful result to a JSON C string, or return a JSON error.
+macro_rules! ffi_result {
+    ($expr:expr) => {
+        match $expr {
+            Ok(val) => string_to_c(serde_json::to_string(&val).unwrap()),
+            Err(e) => string_to_c(e.to_json()),
+        }
+    };
+}
+
 // --- Lifecycle ---
 
 /// Return the library version. Caller must free with `qmdb_free_string`.
@@ -45,10 +65,7 @@ pub unsafe extern "C" fn qmdb_free_string(ptr: *mut c_char) {
 /// `config_json` must be a valid null-terminated UTF-8 C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qmdb_open(config_json: *const c_char) -> *const c_char {
-    let json_str = match unsafe { parse_c_str(config_json, "config_json") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
+    let json_str = parse_arg!(config_json, "config_json");
     let config: serde_json::Value = match serde_json::from_str(json_str) {
         Ok(v) => v,
         Err(e) => return string_to_c(QmdbError::Serialization(e.to_string()).to_json()),
@@ -58,10 +75,7 @@ pub unsafe extern "C" fn qmdb_open(config_json: *const c_char) -> *const c_char 
         None => return string_to_c(QmdbError::Serialization("missing 'path'".into()).to_json()),
     };
     let create = config["create"].as_bool().unwrap_or(false);
-    match state::open(path, create) {
-        Ok(info) => string_to_c(serde_json::to_string(&info).unwrap()),
-        Err(e) => string_to_c(e.to_json()),
-    }
+    ffi_result!(state::open(path, create))
 }
 
 /// Close a database.
@@ -70,10 +84,7 @@ pub unsafe extern "C" fn qmdb_open(config_json: *const c_char) -> *const c_char 
 /// `path` must be a valid null-terminated UTF-8 C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qmdb_close(path: *const c_char) -> *const c_char {
-    let path = match unsafe { parse_c_str(path, "path") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
+    let path = parse_arg!(path, "path");
     match state::close(path) {
         Ok(()) => string_to_c(r#"{"ok":true}"#.to_string()),
         Err(e) => string_to_c(e.to_json()),
@@ -86,10 +97,7 @@ pub unsafe extern "C" fn qmdb_close(path: *const c_char) -> *const c_char {
 /// `path` must be a valid null-terminated UTF-8 C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qmdb_destroy(path: *const c_char) -> *const c_char {
-    let path = match unsafe { parse_c_str(path, "path") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
+    let path = parse_arg!(path, "path");
     match state::destroy(path) {
         Ok(()) => string_to_c(r#"{"ok":true}"#.to_string()),
         Err(e) => string_to_c(e.to_json()),
@@ -102,14 +110,8 @@ pub unsafe extern "C" fn qmdb_destroy(path: *const c_char) -> *const c_char {
 /// `path` must be a valid null-terminated UTF-8 C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qmdb_info(path: *const c_char) -> *const c_char {
-    let path = match unsafe { parse_c_str(path, "path") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
-    match state::info(path) {
-        Ok(info) => string_to_c(serde_json::to_string(&info).unwrap()),
-        Err(e) => string_to_c(e.to_json()),
-    }
+    let path = parse_arg!(path, "path");
+    ffi_result!(state::info(path))
 }
 
 // --- KV Operations ---
@@ -120,14 +122,8 @@ pub unsafe extern "C" fn qmdb_info(path: *const c_char) -> *const c_char {
 /// `path` and `key` must be valid null-terminated UTF-8 C strings.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qmdb_get(path: *const c_char, key: *const c_char) -> *const c_char {
-    let path = match unsafe { parse_c_str(path, "path") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
-    let key = match unsafe { parse_c_str(key, "key") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
+    let path = parse_arg!(path, "path");
+    let key = parse_arg!(key, "key");
     match state::get(path, key) {
         Ok(value) => string_to_c(serde_json::json!({ "value": value }).to_string()),
         Err(e) => string_to_c(e.to_json()),
@@ -144,18 +140,9 @@ pub unsafe extern "C" fn qmdb_update(
     key: *const c_char,
     value: *const c_char,
 ) -> *const c_char {
-    let path = match unsafe { parse_c_str(path, "path") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
-    let key = match unsafe { parse_c_str(key, "key") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
-    let value = match unsafe { parse_c_str(value, "value") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
+    let path = parse_arg!(path, "path");
+    let key = parse_arg!(key, "key");
+    let value = parse_arg!(value, "value");
     match state::update(path, key, value) {
         Ok(loc) => string_to_c(serde_json::json!({ "location": loc }).to_string()),
         Err(e) => string_to_c(e.to_json()),
@@ -168,14 +155,8 @@ pub unsafe extern "C" fn qmdb_update(
 /// `path` and `key` must be valid null-terminated UTF-8 C strings.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qmdb_delete(path: *const c_char, key: *const c_char) -> *const c_char {
-    let path = match unsafe { parse_c_str(path, "path") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
-    let key = match unsafe { parse_c_str(key, "key") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
+    let path = parse_arg!(path, "path");
+    let key = parse_arg!(key, "key");
     match state::delete(path, key) {
         Ok(()) => string_to_c(r#"{"ok":true}"#.to_string()),
         Err(e) => string_to_c(e.to_json()),
@@ -191,14 +172,8 @@ pub unsafe extern "C" fn qmdb_batch_update(
     path: *const c_char,
     entries_json: *const c_char,
 ) -> *const c_char {
-    let path = match unsafe { parse_c_str(path, "path") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
-    let json_str = match unsafe { parse_c_str(entries_json, "entries_json") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
+    let path = parse_arg!(path, "path");
+    let json_str = parse_arg!(entries_json, "entries_json");
     let entries: Vec<serde_json::Value> = match serde_json::from_str(json_str) {
         Ok(v) => v,
         Err(e) => return string_to_c(QmdbError::Serialization(e.to_string()).to_json()),
@@ -233,14 +208,8 @@ pub unsafe extern "C" fn qmdb_batch_update(
 /// `path` must be a valid null-terminated UTF-8 C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qmdb_into_mutable(path: *const c_char) -> *const c_char {
-    let path = match unsafe { parse_c_str(path, "path") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
-    match state::into_mutable(path) {
-        Ok(info) => string_to_c(serde_json::to_string(&info).unwrap()),
-        Err(e) => string_to_c(e.to_json()),
-    }
+    let path = parse_arg!(path, "path");
+    ffi_result!(state::into_mutable(path))
 }
 
 /// Commit changes. Returns JSON-encoded DatabaseInfo.
@@ -249,14 +218,8 @@ pub unsafe extern "C" fn qmdb_into_mutable(path: *const c_char) -> *const c_char
 /// `path` must be a valid null-terminated UTF-8 C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qmdb_commit(path: *const c_char) -> *const c_char {
-    let path = match unsafe { parse_c_str(path, "path") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
-    match state::commit(path) {
-        Ok(info) => string_to_c(serde_json::to_string(&info).unwrap()),
-        Err(e) => string_to_c(e.to_json()),
-    }
+    let path = parse_arg!(path, "path");
+    ffi_result!(state::commit(path))
 }
 
 /// Merkleize the database. Returns JSON-encoded DatabaseInfo.
@@ -265,14 +228,8 @@ pub unsafe extern "C" fn qmdb_commit(path: *const c_char) -> *const c_char {
 /// `path` must be a valid null-terminated UTF-8 C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qmdb_merkleize(path: *const c_char) -> *const c_char {
-    let path = match unsafe { parse_c_str(path, "path") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
-    match state::merkleize(path) {
-        Ok(info) => string_to_c(serde_json::to_string(&info).unwrap()),
-        Err(e) => string_to_c(e.to_json()),
-    }
+    let path = parse_arg!(path, "path");
+    ffi_result!(state::merkleize(path))
 }
 
 // --- Proofs ---
@@ -283,18 +240,9 @@ pub unsafe extern "C" fn qmdb_merkleize(path: *const c_char) -> *const c_char {
 /// `path` and `key` must be valid null-terminated UTF-8 C strings.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qmdb_prove(path: *const c_char, key: *const c_char) -> *const c_char {
-    let path = match unsafe { parse_c_str(path, "path") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
-    let key = match unsafe { parse_c_str(key, "key") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
-    match state::prove(path, key) {
-        Ok(proof) => string_to_c(serde_json::to_string(&proof).unwrap()),
-        Err(e) => string_to_c(e.to_json()),
-    }
+    let path = parse_arg!(path, "path");
+    let key = parse_arg!(key, "key");
+    ffi_result!(state::prove(path, key))
 }
 
 /// Generate a range proof. Returns JSON-encoded Proof.
@@ -307,14 +255,8 @@ pub unsafe extern "C" fn qmdb_range_proof(
     start: u64,
     end: u64,
 ) -> *const c_char {
-    let path = match unsafe { parse_c_str(path, "path") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
-    match state::range_proof(path, start, end) {
-        Ok(proof) => string_to_c(serde_json::to_string(&proof).unwrap()),
-        Err(e) => string_to_c(e.to_json()),
-    }
+    let path = parse_arg!(path, "path");
+    ffi_result!(state::range_proof(path, start, end))
 }
 
 /// Verify a proof against a root. Returns JSON-encoded VerifyResult.
@@ -326,14 +268,8 @@ pub unsafe extern "C" fn qmdb_verify(
     proof_json: *const c_char,
     root: *const c_char,
 ) -> *const c_char {
-    let json_str = match unsafe { parse_c_str(proof_json, "proof_json") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
-    let root = match unsafe { parse_c_str(root, "root") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
+    let json_str = parse_arg!(proof_json, "proof_json");
+    let root = parse_arg!(root, "root");
     let proof: state::Proof = match serde_json::from_str(json_str) {
         Ok(p) => p,
         Err(e) => return string_to_c(QmdbError::Serialization(e.to_string()).to_json()),
@@ -354,14 +290,8 @@ pub unsafe extern "C" fn qmdb_operations_since(
     since: u64,
     limit: u64,
 ) -> *const c_char {
-    let path = match unsafe { parse_c_str(path, "path") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
-    match state::operations_since(path, since, limit) {
-        Ok(ops) => string_to_c(serde_json::to_string(&ops).unwrap()),
-        Err(e) => string_to_c(e.to_json()),
-    }
+    let path = parse_arg!(path, "path");
+    ffi_result!(state::operations_since(path, since, limit))
 }
 
 /// Apply operations from a remote source. Returns JSON-encoded Bounds.
@@ -373,14 +303,8 @@ pub unsafe extern "C" fn qmdb_apply_operations(
     path: *const c_char,
     ops_json: *const c_char,
 ) -> *const c_char {
-    let path = match unsafe { parse_c_str(path, "path") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
-    let json_str = match unsafe { parse_c_str(ops_json, "ops_json") } {
-        Ok(s) => s,
-        Err(e) => return string_to_c(e.to_json()),
-    };
+    let path = parse_arg!(path, "path");
+    let json_str = parse_arg!(ops_json, "ops_json");
     let operations: Vec<state::Operation> = match serde_json::from_str(json_str) {
         Ok(v) => v,
         Err(e) => return string_to_c(QmdbError::Serialization(e.to_string()).to_json()),

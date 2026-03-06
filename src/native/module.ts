@@ -69,10 +69,10 @@ function createNitroAdapter(hybrid: any): NativeQMDB {
       return parseJson(json);
     },
     async close(path) {
-      hybrid.close(path);
+      parseJson(hybrid.close(path));
     },
     async destroy(path) {
-      hybrid.destroy(path);
+      parseJson(hybrid.destroy(path));
     },
     async info(path) {
       return parseJson(hybrid.info(path));
@@ -86,7 +86,7 @@ function createNitroAdapter(hybrid: any): NativeQMDB {
       return result.location;
     },
     async delete(path, key) {
-      hybrid.remove(path, key);
+      parseJson(hybrid.remove(path, key));
     },
     async batchUpdate(path, entries) {
       const result = parseJson(
@@ -113,7 +113,7 @@ function createNitroAdapter(hybrid: any): NativeQMDB {
       return parseJson(hybrid.verify(JSON.stringify(proof), root));
     },
     async operationsSince(path, since, limit) {
-      return JSON.parse(hybrid.operationsSince(path, since, limit));
+      return parseJson(hybrid.operationsSince(path, since, limit));
     },
     async applyOperations(path, operations) {
       const json = hybrid.applyOperations(path, JSON.stringify(operations));
